@@ -56,6 +56,13 @@ web-sys = { version = "0.3", features = [
 ] }
 wasm-bindgen = "0.2"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-game-controller = "0.3"
+dispatch = "0.2"
+block2 = "0.6"
+
 [package.metadata.docs.rs]
 features = ["serde"]
 
