@@ -12,6 +12,12 @@ use std::time::SystemTime;
 mod platform;
 pub mod utils;
 
+/// Android-specific entry points.
+#[cfg(target_os = "android")]
+pub mod android {
+    pub use crate::platform::api::*;
+}
+
 /// True, if Y axis of sticks commonly points downwards.
 pub const IS_Y_AXIS_REVERSED: bool = platform::IS_Y_AXIS_REVERSED;
 

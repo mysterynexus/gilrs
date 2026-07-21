@@ -3,6 +3,15 @@ Change Log
 
 See also [gilrs-core changelog](../gilrs-core/CHANGELOG.md).
 
+Unreleased
+----------
+
+### Added
+
+- Android support. Gamepads are detected and mapped without any application code; see the
+  `gilrs::android` module for the cases that need manual event forwarding.
+- `android-activity` feature, for forwarding input events from a `NativeActivity`
+
 v0.11.0 - 2024-09-15
 ----------
 

@@ -33,6 +33,10 @@ mod platform;
 #[path = "ios/mod.rs"]
 mod platform;
 
+#[cfg(target_os = "android")]
+#[path = "android/mod.rs"]
+mod platform;
+
 #[cfg(all(not(feature = "xinput"), not(feature = "wgi")))]
 compile_error!(
     "Windows needs one of the features `gilrs/xinput` or `gilrs/wgi` enabled. \nEither don't use \
@@ -59,7 +63,8 @@ mod platform;
     not(target_os = "macos"),
     not(target_os = "windows"),
     not(target_arch = "wasm32"),
-    not(target_os = "ios")
+    not(target_os = "ios"),
+    not(target_os = "android")
 ))]
 #[path = "default/mod.rs"]
 mod platform;

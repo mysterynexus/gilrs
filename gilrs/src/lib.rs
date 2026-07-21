@@ -134,6 +134,9 @@ mod utils;
 pub mod ev;
 pub mod ff;
 
+#[cfg(target_os = "android")]
+pub use gilrs_core::android;
+
 pub use crate::ev::filter::Filter;
 pub use crate::ev::{Axis, Button, Event, EventType};
 pub use crate::gamepad::{

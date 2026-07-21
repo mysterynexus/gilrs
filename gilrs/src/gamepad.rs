@@ -148,6 +148,10 @@ pub struct Gilrs {
 impl Gilrs {
     /// Creates new `Gilrs` with default settings. See [`GilrsBuilder`](struct.GilrsBuilder.html)
     /// for more details.
+    // `Error::NotImplemented` deliberately carries a usable dummy `Gilrs` so callers can keep
+    // going on unsupported platforms. Boxing it to shrink the `Err` variant would be a breaking
+    // change to the public error type for no functional gain.
+    #[allow(clippy::result_large_err)]
     pub fn new() -> Result<Self, Error> {
         GilrsBuilder::new().build()
     }
@@ -467,7 +471,7 @@ impl Gilrs {
     ///     # break;
     /// }
     /// ```
-    pub fn gamepad(&self, id: GamepadId) -> Gamepad {
+    pub fn gamepad(&self, id: GamepadId) -> Gamepad<'_> {
         Gamepad {
             inner: self.inner.gamepad(id.0).unwrap(),
             data: &self.gamepads_data[id.0],
@@ -694,6 +698,8 @@ impl GilrsBuilder {
     }
 
     /// Creates `Gilrs`.
+    // See the note on `Gilrs::new`.
+    #[allow(clippy::result_large_err)]
     pub fn build(mut self) -> Result<Gilrs, Error> {
         if self.included_mappings {
             self.mappings.add_included_mappings();
@@ -1165,6 +1171,9 @@ fn btn_value(info: &AxisInfo, val: i32) -> f32 {
 /// Error type which can be returned when creating `Gilrs`.
 #[non_exhaustive]
 #[derive(Debug)]
+// `NotImplemented` carries a usable dummy context by design, so it is inherently much larger than
+// the other variants. Boxing it would change the public error type without buying anything.
+#[allow(clippy::large_enum_variant)]
 pub enum Error {
     /// Gilrs does not support the current platform, but you can use dummy context from this error if
     /// gamepad input is not essential.

@@ -56,6 +56,13 @@ web-sys = { version = "0.3", features = [
 ] }
 wasm-bindgen = "0.2"
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+ndk-context = "0.1"
+# The backend feature (`native-activity` or `game-activity`) is deliberately left to the
+# application, which already selects one for winit.
+android-activity = { version = "0.6", optional = true, default-features = false }
+
 [target.'cfg(target_os = "ios")'.dependencies]
 objc2 = "0.6"
 objc2-foundation = "0.3"
@@ -71,3 +78,4 @@ default = ["wgi"]
 serde-serialize = ["serde"]
 xinput = ["rusty-xinput", "winapi"]
 wgi = ["windows"]
+android-activity = ["dep:android-activity"]

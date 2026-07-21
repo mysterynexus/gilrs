@@ -111,6 +111,28 @@ Unlike other platforms, events are only generated when you call `Gilrs::next_eve
 
 See [`./gilrs/examples/wasm/README.md`](./gilrs/examples/wasm/README.md) for running the examples using Wasm.
 
+Android
+-----
+
+Requires Android 8.0 (API 26) or newer. Gamepads work without any application code: `Gilrs::new()`
+enumerates devices over JNI and installs a hook on the activity's window callback to observe
+gamepad input, passing every event through untouched. This covers `GameActivity`, which is what
+winit and bevy use.
+
+Android normalises gamepads onto standard keycodes and axes, so the backend reports those directly
+and relies on gilrs' default mapping rather than the SDL mapping database.
+
+Two situations need the application to forward events itself, via the `gilrs::android` module:
+
+- A `NativeActivity`, where the native input queue consumes events before they reach the Java
+  window callback. Enable the `android-activity` feature and call
+  `gilrs::android::handle_input_event()` for each event.
+- A library embedded in an existing Java application, which should pass its `KeyEvent`s and
+  `MotionEvent`s to `gilrs::android::handle_key_event()` / `handle_motion_event()`.
+
+If nothing has initialized [`ndk-context`](https://crates.io/crates/ndk-context) (`android-activity`
+does so before `main`), call `gilrs::android::init_with_vm()` before creating `Gilrs`.
+
 License
 =======
 

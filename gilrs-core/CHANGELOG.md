@@ -1,6 +1,16 @@
 Change Log
 ==========
 
+Unreleased
+----------
+
+### Added
+
+- Android support, including hotplug, force feedback via the controller's vibrator and battery
+  reporting on API 31+. Requires Android 8.0 (API 26) or newer.
+- `gilrs_core::android`, with entry points for applications that cannot rely on the automatic
+  input hook
+
 v0.6.4 - 2025-04-06
 ----------
 

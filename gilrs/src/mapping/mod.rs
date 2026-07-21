@@ -31,10 +31,13 @@ const SDL_PLATFORM_NAME: &str = "Linux";
 const SDL_PLATFORM_NAME: &str = "Mac OS X";
 #[cfg(target_os = "windows")]
 const SDL_PLATFORM_NAME: &str = "Windows";
+#[cfg(target_os = "android")]
+const SDL_PLATFORM_NAME: &str = "Android";
 #[cfg(all(
     not(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd")),
     not(target_os = "macos"),
-    not(target_os = "windows")
+    not(target_os = "windows"),
+    not(target_os = "android")
 ))]
 const SDL_PLATFORM_NAME: &str = "Unknown";
 
