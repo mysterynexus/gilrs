@@ -12,6 +12,28 @@ Unreleased
   `gilrs::android` module for the cases that need manual event forwarding.
 - `android-activity` feature, for forwarding input events from a `NativeActivity`
 
+v0.11.2 - 2026-05-30
+----------
+
+### Changed
+
+- MSRV is now 1.84
+- Updated bundled mappings
+- Always use forward slash in `include/include_str!`
+
+v0.11.1 - 2026-01-11
+----------
+
+### Changed
+
+- Updated bundled mappings. (!167)
+
+### Added
+
+- Added `LinuxGamepadExt` trait with `devpath` method. (!166, !167)
+- It is now possible to disable force feedback support
+  via `GilrsBuilder::with_force_feedback`. (!165)
+
 v0.11.0 - 2024-09-15
 ----------
 
