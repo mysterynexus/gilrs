@@ -7,11 +7,12 @@
 
 //! Android-specific entry points, re-exported as `gilrs_core::android` / `gilrs::android`.
 //!
-//! Most applications never need any of this: `Gilrs::new()` installs a hook on the activity's
-//! window callback and picks up gamepad input on its own. The functions here exist for the cases
-//! that hook cannot cover — a `NativeActivity`, where input is consumed by the native input queue
-//! before it ever reaches the Java window callback, or a library embedded in an existing Java
-//! application.
+//! Most applications never need any of this: `Gilrs::new()` registers Activity lifecycle tracking
+//! and installs a hook on the resumed activity's window callback. With an Application context,
+//! initialize before the first Activity resume; an already-resumed Activity is discovered on its
+//! next resume. Legacy Activity contexts are hooked immediately. The functions here cover a
+//! `NativeActivity`, where input is consumed before reaching the Java window callback, or a
+//! library embedded in an existing Java application.
 
 use std::ffi::c_void;
 

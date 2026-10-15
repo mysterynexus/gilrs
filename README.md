@@ -115,9 +115,16 @@ Android
 -----
 
 Requires Android 8.0 (API 26) or newer. Gamepads work without any application code: `Gilrs::new()`
-enumerates devices over JNI and installs a hook on the activity's window callback to observe
-gamepad input, passing every event through untouched. This covers `GameActivity`, which is what
-winit and bevy use.
+enumerates devices over JNI and registers Activity lifecycle callbacks to install a hook on the
+resumed activity's window callback. The hook observes gamepad input and passes every event through
+untouched. This covers `GameActivity`, which is what winit and bevy use, with either an Activity or
+an Application stored in `ndk-context`. Activity recreation and hook cleanup are handled internally.
+
+When `ndk-context` supplies an Application, create `Gilrs` before the Activity's first `onResume`,
+as Bevy's `GilrsPlugin` does before starting the Android event loop. Callback registration finishes
+before `Gilrs::new()` returns. Initializing after `onResume` waits until the next resume to discover
+the Activity; lifecycle callbacks do not replay earlier events. Legacy Activity contexts can be
+hooked immediately even when initialized later.
 
 Android normalises gamepads onto standard keycodes and axes, so the backend reports those directly
 and relies on gilrs' default mapping rather than the SDL mapping database.
@@ -132,6 +139,11 @@ Two situations need the application to forward events itself, via the `gilrs::an
 
 If nothing has initialized [`ndk-context`](https://crates.io/crates/ndk-context) (`android-activity`
 does so before `main`), call `gilrs::android::init_with_vm()` before creating `Gilrs`.
+
+The embedded Java hook can be rebuilt with `gilrs-core/src/platform/android/java/build.sh`.
+Run its host-side lifecycle and JNI forwarding regression tests with
+`gilrs-core/src/platform/android/java/tests/run.sh`. These tests model Android lifecycle behavior;
+controller delivery on a device still needs to be verified.
 
 License
 =======

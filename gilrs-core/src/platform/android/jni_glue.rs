@@ -7,9 +7,9 @@
 
 //! Everything that talks to the JVM.
 //!
-//! All of it runs on one permanently attached worker thread, except the two native callbacks
-//! invoked by the `Window.Callback` hook, which run on the UI thread with the `JNIEnv` handed to
-//! them by the JVM.
+//! Hook initialization runs synchronously before the worker starts, so Activity lifecycle
+//! observation is registered before the application's event loop can resume the Activity. Other
+//! JNI work runs on the permanently attached worker, except input callbacks on the UI thread.
 
 use std::collections::HashMap;
 use std::ffi::c_void;
@@ -190,15 +190,45 @@ pub(super) fn start() -> Result<(), String> {
 
     STARTED
         .get_or_init(|| {
-            if vm().is_none() {
-                return Err("no JavaVM available; the Android context was not initialized and \
-                            gilrs::android::init_with_vm() was not called"
-                    .to_owned());
+            let vm = vm().ok_or_else(|| {
+                "no JavaVM available; the Android context was not initialized and \
+                 gilrs::android::init_with_vm() was not called"
+                    .to_owned()
+            })?;
+            let mut worker = Worker {
+                hook: None,
+                known: HashMap::new(),
+                battery: HashMap::new(),
+                vibrators: HashMap::new(),
+                context_ptr: 0,
+                hook_attempts: 0,
+                warned_no_context: false,
+                passes: 0,
+                sdk_int: 0,
+            };
+
+            if AUTO_HOOK.load(Ordering::Relaxed) {
+                match vm.attach_current_thread() {
+                    Ok(mut env) => {
+                        let result = env.with_local_frame::<_, (), jni::errors::Error>(32, |env| {
+                            worker.sdk_int = read_sdk_int(env);
+                            maybe_install_hook(env, &mut worker);
+                            Ok(())
+                        });
+                        if let Err(error) = result {
+                            warn!("gilrs: failed to initialize the Android input hook: {error}");
+                            clear_exception(&mut env);
+                        }
+                    }
+                    Err(error) => {
+                        warn!("gilrs: failed to attach for Android input hook setup: {error}");
+                    }
+                }
             }
 
             std::thread::Builder::new()
                 .name("gilrs-android".to_owned())
-                .spawn(thread_main)
+                .spawn(move || thread_main(worker))
                 .map(|_| ())
                 .map_err(|e| format!("failed to spawn the gilrs Android thread: {e}"))
         })
@@ -209,25 +239,24 @@ pub(super) fn start() -> Result<(), String> {
 const BATTERY_EVERY: u32 = 8;
 
 struct Worker {
-    activity: Option<GlobalRef>,
     hook: Option<GlobalRef>,
     known: HashMap<i32, Arc<DeviceInfo>>,
     battery: HashMap<i32, PowerInfo>,
     /// Cached per device so that sustaining a rumble does not re-resolve the device and its
     /// vibrator on every tick.
     vibrators: HashMap<i32, GlobalRef>,
-    /// Raw pointer of the activity behind `activity`, used only to notice that Android swapped it
-    /// for a new one.
-    activity_ptr: usize,
+    /// Used only to notice context replacement in older android-activity releases. Activity
+    /// references themselves belong to the Java lifecycle observer, which releases them on destroy.
+    context_ptr: usize,
     hook_attempts: u32,
-    warned_no_activity: bool,
+    warned_no_context: bool,
     passes: u32,
     sdk_int: i32,
 }
 
 const MAX_HOOK_ATTEMPTS: u32 = 3;
 
-fn thread_main() {
+fn thread_main(mut worker: Worker) {
     let Some(vm) = vm() else { return };
     let mut env = match vm.attach_current_thread_permanently() {
         Ok(env) => env,
@@ -237,21 +266,9 @@ fn thread_main() {
         }
     };
 
-    let mut worker = Worker {
-        activity: None,
-        hook: None,
-        known: HashMap::new(),
-        battery: HashMap::new(),
-        vibrators: HashMap::new(),
-        activity_ptr: 0,
-        hook_attempts: 0,
-        warned_no_activity: false,
-        passes: 0,
-        sdk_int: sdk_int(&mut env).unwrap_or(0),
-    };
-
-    refresh_activity(&mut env, &mut worker);
-    maybe_install_hook(&mut env, &mut worker);
+    if worker.sdk_int == 0 {
+        worker.sdk_int = read_sdk_int(&mut env);
+    }
 
     let mut last_poll = Instant::now() - POLL_INTERVAL;
     loop {
@@ -274,7 +291,7 @@ fn thread_main() {
                     warn!("gilrs: failed to enumerate Android input devices: {e}");
                     clear_exception(env);
                 }
-                refresh_activity(env, &mut worker);
+                refresh_context(env, &mut worker);
                 maybe_install_hook(env, &mut worker);
                 ensure_hook(env, &worker);
             }
@@ -295,33 +312,32 @@ fn thread_main() {
     }
 }
 
-/// Picks up the current activity if Android swapped it for a new one.
-///
-/// Activities are torn down and recreated while the process lives on, and `android-activity`
-/// releases and re-initializes the context around that. Without noticing the swap we would keep a
-/// hook on a destroyed window and silently stop seeing input.
-fn refresh_activity(env: &mut JNIEnv, worker: &mut Worker) {
+/// Older android-activity releases replace their Activity context on recreation. New releases
+/// retain an Application context, with Activity changes handled by the Java lifecycle observer.
+fn refresh_context(env: &mut JNIEnv, worker: &mut Worker) {
     let Some(ctx) = android_context().filter(|ctx| !ctx.context().is_null()) else {
         return;
     };
 
     let ptr = ctx.context() as usize;
-    if ptr == worker.activity_ptr {
+    if ptr == worker.context_ptr {
         return;
     }
 
-    let activity = unsafe { JObject::from_raw(ctx.context() as jobject) };
-    let Ok(activity) = env.new_global_ref(&activity) else {
-        clear_exception(env);
-        return;
-    };
+    if let Some(hook) = &worker.hook {
+        let context = unsafe { JObject::from_raw(ctx.context() as jobject) };
+        let result = env
+            .new_local_ref(&context)
+            .and_then(|context| initialize_hook(env, hook, &context));
+        if let Err(error) = result {
+            warn!("gilrs: failed to update the Android input hook context: {error}");
+            clear_exception(env);
+            return;
+        }
+    }
 
-    worker.activity = Some(activity);
-    worker.activity_ptr = ptr;
-    // A new activity deserves a fresh set of attempts if loading previously gave up.
+    worker.context_ptr = ptr;
     worker.hook_attempts = 0;
-    // The loaded class is reused as-is; GilrsHook.ensureInstalled notices that it was handed a
-    // different activity and starts over with a fresh proxy on the new window.
 }
 
 fn clear_exception(env: &mut JNIEnv) {
@@ -333,6 +349,17 @@ fn clear_exception(env: &mut JNIEnv) {
 fn sdk_int(env: &mut JNIEnv) -> jni::errors::Result<i32> {
     env.get_static_field("android/os/Build$VERSION", "SDK_INT", "I")?
         .i()
+}
+
+fn read_sdk_int(env: &mut JNIEnv) -> i32 {
+    match sdk_int(env) {
+        Ok(version) => version,
+        Err(error) => {
+            warn!("gilrs: failed to read the Android API level: {error}");
+            clear_exception(env);
+            0
+        }
+    }
 }
 
 // -- device enumeration ---------------------------------------------------------------------
@@ -414,11 +441,7 @@ fn enumerate(env: &mut JNIEnv, worker: &mut Worker) -> jni::errors::Result<()> {
     Ok(())
 }
 
-fn read_device(
-    env: &mut JNIEnv,
-    sdk_int: i32,
-    id: i32,
-) -> jni::errors::Result<Option<DeviceInfo>> {
+fn read_device(env: &mut JNIEnv, sdk_int: i32, id: i32) -> jni::errors::Result<Option<DeviceInfo>> {
     let device = env
         .call_static_method(
             "android/view/InputDevice",
@@ -494,7 +517,10 @@ fn read_axes(env: &mut JNIEnv, device: &JObject) -> jni::errors::Result<Vec<Axis
     }
 
     let pick = |candidates: &[i32]| -> Option<i32> {
-        candidates.iter().copied().find(|a| available.contains_key(a))
+        candidates
+            .iter()
+            .copied()
+            .find(|a| available.contains_key(a))
     };
 
     let assignment = [
@@ -794,8 +820,8 @@ fn run_command(
 
 /// Loads the hook once, retrying a bounded number of times.
 ///
-/// The first attempt runs before the activity's window necessarily exists, so a retry is needed;
-/// a cap keeps a permanent failure (an old API level, say) from warning on every poll.
+/// Lifecycle observation starts before the first Activity resume; a cap keeps permanent setup
+/// failures from warning on every poll. Java retries window installation once an Activity exists.
 fn maybe_install_hook(env: &mut JNIEnv, worker: &mut Worker) {
     if worker.hook.is_some()
         || worker.hook_attempts >= MAX_HOOK_ATTEMPTS
@@ -804,42 +830,47 @@ fn maybe_install_hook(env: &mut JNIEnv, worker: &mut Worker) {
         return;
     }
 
-    if worker.activity.is_none() {
+    let Some(context) = android_context().filter(|context| !context.context().is_null()) else {
         // Enumeration only needs the VM, so gamepads still show up here while input silently
         // never arrives. Say something rather than leave that looking like working support.
-        if !worker.warned_no_activity {
-            worker.warned_no_activity = true;
+        if !worker.warned_no_context {
+            worker.warned_no_context = true;
             warn!(
-                "gilrs: no Android Activity available, so gamepads will be detected but report no \
+                "gilrs: no Android Context available, so gamepads will be detected but report no \
                  input. Applications that do not use android-activity should call \
                  gilrs::android::init_with_vm and forward input events themselves."
             );
         }
         return;
-    }
+    };
 
     worker.hook_attempts += 1;
-    install_hook(env, worker);
+    worker.context_ptr = context.context() as usize;
+    let context = unsafe { JObject::from_raw(context.context() as jobject) };
+    match env.new_local_ref(&context) {
+        Ok(context) => install_hook(env, worker, &context),
+        Err(error) => {
+            warn!("gilrs: failed to retain the Android input hook context: {error}");
+            clear_exception(env);
+        }
+    }
 }
 
-fn install_hook(env: &mut JNIEnv, worker: &mut Worker) {
+fn install_hook(env: &mut JNIEnv, worker: &mut Worker, context: &JObject) {
     debug!(
         "gilrs: installing the Android input hook (attempt {}, sdk {})",
         worker.hook_attempts, worker.sdk_int
     );
 
-    // ndk-context only promises a Context, not an Activity, and JNI does not type check
-    // arguments — handing a non-Activity to a method declared to take one is undefined behavior.
-    let is_activity = worker.activity.as_ref().is_some_and(|activity| {
-        env.is_instance_of(activity.as_obj(), "android/app/Activity")
-            .unwrap_or(false)
-    });
+    let is_context = env
+        .is_instance_of(context, "android/content/Context")
+        .unwrap_or(false);
 
-    if !is_activity {
+    if !is_context {
         clear_exception(env);
         warn!(
-            "gilrs: no Android Activity available, gamepad input events will only be seen if the \
-             application forwards them via gilrs::android"
+            "gilrs: the Android context is not a Context, gamepad input events will only be seen \
+             if the application forwards them via gilrs::android"
         );
         return;
     }
@@ -855,26 +886,9 @@ fn install_hook(env: &mut JNIEnv, worker: &mut Worker) {
         return;
     }
 
-    // Under a NativeActivity the native input queue consumes events before they ever reach the
-    // Java window callback, so the hook installs cleanly and then never fires. Say so, rather than
-    // leaving a silently dead gamepad.
-    let is_native_activity = worker.activity.as_ref().is_some_and(|activity| {
-        env.is_instance_of(activity.as_obj(), "android/app/NativeActivity")
-            .unwrap_or(false)
-    });
-    clear_exception(env);
-    if is_native_activity {
-        warn!(
-            "gilrs: running under a NativeActivity, which consumes input events before they reach \
-             the window callback. Gamepads will be detected but report no input unless the \
-             application forwards events via gilrs::android::handle_input_event (enable the \
-             `android-activity` feature), or switches to GameActivity."
-        );
-    }
-
-    match load_hook(env, worker) {
+    match load_hook(env, context) {
         Ok(hook) => {
-            info!("gilrs: Android input hook installed on the activity's window callback.");
+            info!("gilrs: Android input hook initialized with Activity lifecycle tracking.");
             worker.hook = Some(hook);
             ensure_hook(env, worker);
         }
@@ -888,13 +902,13 @@ fn install_hook(env: &mut JNIEnv, worker: &mut Worker) {
     }
 }
 
-fn load_hook(env: &mut JNIEnv, worker: &Worker) -> jni::errors::Result<GlobalRef> {
-    env.with_local_frame::<_, GlobalRef, jni::errors::Error>(32, |env| load_hook_inner(env, worker))
+fn load_hook(env: &mut JNIEnv, context: &JObject) -> jni::errors::Result<GlobalRef> {
+    env.with_local_frame::<_, GlobalRef, jni::errors::Error>(32, |env| {
+        load_hook_inner(env, context)
+    })
 }
 
-fn load_hook_inner(env: &mut JNIEnv, worker: &Worker) -> jni::errors::Result<GlobalRef> {
-    let activity = worker.activity.as_ref().expect("checked by caller");
-
+fn load_hook_inner(env: &mut JNIEnv, context: &JObject) -> jni::errors::Result<GlobalRef> {
     let dex = env.byte_array_from_slice(DEX)?;
     let buffer = env
         .call_static_method(
@@ -906,12 +920,7 @@ fn load_hook_inner(env: &mut JNIEnv, worker: &Worker) -> jni::errors::Result<Glo
         .l()?;
 
     let parent = env
-        .call_method(
-            activity.as_obj(),
-            "getClassLoader",
-            "()Ljava/lang/ClassLoader;",
-            &[],
-        )?
+        .call_method(context, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
         .l()?;
 
     let loader = env.new_object(
@@ -947,23 +956,35 @@ fn load_hook_inner(env: &mut JNIEnv, worker: &Worker) -> jni::errors::Result<Glo
         ],
     )?;
 
-    env.new_global_ref(&class)
+    let hook = env.new_global_ref(&class)?;
+    initialize_hook(env, &hook, context)?;
+    Ok(hook)
+}
+
+fn initialize_hook(
+    env: &mut JNIEnv,
+    hook: &GlobalRef,
+    context: &JObject,
+) -> jni::errors::Result<()> {
+    let class = <&JClass>::from(hook.as_obj());
+    env.call_static_method(
+        class,
+        "initialize",
+        "(Landroid/content/Context;)V",
+        &[JValue::Object(context)],
+    )?;
+    Ok(())
 }
 
 /// Reinstalls the hook if something else replaced the window callback in the meantime; appcompat
 /// and friends do exactly that. `ensureInstalled` is a no-op when we are already in place.
 fn ensure_hook(env: &mut JNIEnv, worker: &Worker) {
-    let (Some(hook), Some(activity)) = (&worker.hook, &worker.activity) else {
+    let Some(hook) = &worker.hook else {
         return;
     };
 
     let class = <&JClass>::from(hook.as_obj());
-    let result = env.call_static_method(
-        class,
-        "ensureInstalled",
-        "(Landroid/app/Activity;)V",
-        &[JValue::Object(activity.as_obj())],
-    );
+    let result = env.call_static_method(class, "ensureInstalled", "()V", &[]);
     if let Err(e) = result {
         warn!("gilrs: GilrsHook.ensureInstalled failed: {e}");
         clear_exception(env);

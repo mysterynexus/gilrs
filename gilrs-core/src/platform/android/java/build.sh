@@ -24,7 +24,7 @@ javac -source 8 -target 8 -nowarn \
     --min-api 26 \
     --lib "$ANDROID_HOME/platforms/$ANDROID_PLATFORM/android.jar" \
     --output "$out" \
-    "$out/org/gilrs/GilrsHook.class"
+    "$out"/org/gilrs/*.class
 
 cp "$out/classes.dex" ../gilrs_hook.dex
 echo "wrote ../gilrs_hook.dex ($(wc -c < ../gilrs_hook.dex | tr -d ' ') bytes)"
