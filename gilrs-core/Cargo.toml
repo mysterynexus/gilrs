@@ -13,20 +13,20 @@ edition = "2021"
 rust-version = "1.80.0"
 
 [dependencies]
-uuid = "1.0.0"
-log = "0.4.1"
+uuid = "1.28.0"
+log = "0.4.34"
 serde = { version = "1.0", features = ["derive"], optional = true }
 
 
 [dev-dependencies]
-env_logger = "0.11.5"
+env_logger = "0.11.11"
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"))'.dependencies]
 libudev-sys = "0.1.4"
 libc = "0.2"
 nix = { version = "0.31.3", default-features = false, features = ["ioctl", "event"] }
 vec_map = "0.8"
-inotify = { version = "0.11.0", default-features = false }
+inotify = { version = "0.11.5", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
@@ -45,8 +45,8 @@ objc2-io-kit = { version = "0.3.2", default-features = false, features = [
 vec_map = "0.8"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winapi = { version = "0.3.4", features = ["xinput"], optional = true }
-rusty-xinput = { version = "1.2.0", optional = true }
+winapi = { version = "0.3.9", features = ["xinput"], optional = true }
+rusty-xinput = { version = "1.3.0", optional = true }
 windows = { version = ">=0.44, <=0.62", optional = true, features = [
     "Gaming_Input",
     "Foundation_Collections",
@@ -68,7 +68,7 @@ web-sys = { version = "0.3", features = [
 wasm-bindgen = "0.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.21"
+jni = "0.22"
 ndk-context = "0.1"
 # The backend feature (`native-activity` or `game-activity`) is deliberately left to the
 # application, which already selects one for winit.
