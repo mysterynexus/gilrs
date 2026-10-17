@@ -68,7 +68,7 @@ web-sys = { version = "0.3", features = [
 wasm-bindgen = "0.2"
 
 [target.'cfg(target_os = "android")'.dependencies]
-jni = "0.22"
+jni = "0.22.4"
 ndk-context = "0.1"
 # The backend feature (`native-activity` or `game-activity`) is deliberately left to the
 # application, which already selects one for winit.

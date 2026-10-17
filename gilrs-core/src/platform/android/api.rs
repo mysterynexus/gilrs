@@ -16,8 +16,8 @@
 
 use std::ffi::c_void;
 
-use jni::objects::{JObject, JValue};
-use jni::JNIEnv;
+use jni::objects::JObject;
+use jni::{jni_sig, jni_str, Env, JValue};
 
 use super::jni_glue::{self, SOURCE_CLASS_JOYSTICK};
 use super::sink::{sink, RawEvent};
@@ -50,7 +50,7 @@ pub fn set_auto_hook(enabled: bool) {
 ///
 /// Returns whether the event came from a known gamepad. The event is only inspected, never
 /// consumed — the caller remains free to handle it.
-pub fn handle_key_event(env: &mut JNIEnv, event: &JObject) -> bool {
+pub fn handle_key_event(env: &mut Env, event: &JObject) -> bool {
     match key_event(env, event) {
         Ok(handled) => handled,
         Err(_) => {
@@ -64,7 +64,7 @@ pub fn handle_key_event(env: &mut JNIEnv, event: &JObject) -> bool {
 ///
 /// Returns whether the event came from a known gamepad. The event is only inspected, never
 /// consumed — the caller remains free to handle it.
-pub fn handle_motion_event(env: &mut JNIEnv, event: &JObject) -> bool {
+pub fn handle_motion_event(env: &mut Env, event: &JObject) -> bool {
     match motion_event(env, event) {
         Ok(handled) => handled,
         Err(_) => {
@@ -74,8 +74,8 @@ pub fn handle_motion_event(env: &mut JNIEnv, event: &JObject) -> bool {
     }
 }
 
-fn clear_exception(env: &mut JNIEnv) {
-    if env.exception_check().unwrap_or(false) {
+fn clear_exception(env: &mut Env) {
+    if env.exception_check() {
         let _ = env.exception_clear();
     }
 }
@@ -85,15 +85,21 @@ fn is_gamepad_keycode(keycode: i32) -> bool {
     matches!(keycode, 4 | 19..=23 | 96..=110 | 188..=203)
 }
 
-fn key_event(env: &mut JNIEnv, event: &JObject) -> jni::errors::Result<bool> {
-    let device_id = env.call_method(event, "getDeviceId", "()I", &[])?.i()?;
+fn key_event(env: &mut Env, event: &JObject) -> jni::errors::Result<bool> {
+    let device_id = env
+        .call_method(event, jni_str!("getDeviceId"), jni_sig!("()I"), &[])?
+        .i()?;
 
-    let action = env.call_method(event, "getAction", "()I", &[])?.i()?;
+    let action = env
+        .call_method(event, jni_str!("getAction"), jni_sig!("()I"), &[])?
+        .i()?;
     if action != ACTION_DOWN && action != ACTION_UP {
         return Ok(false);
     }
 
-    let keycode = env.call_method(event, "getKeyCode", "()I", &[])?.i()?;
+    let keycode = env
+        .call_method(event, jni_str!("getKeyCode"), jni_sig!("()I"), &[])?
+        .i()?;
 
     if !sink().is_known_device(device_id) {
         if is_gamepad_keycode(keycode) {
@@ -106,7 +112,12 @@ fn key_event(env: &mut JNIEnv, event: &JObject) -> jni::errors::Result<bool> {
     }
 
     // Auto-repeat re-sends ACTION_DOWN; gilrs only wants edges.
-    if action == ACTION_DOWN && env.call_method(event, "getRepeatCount", "()I", &[])?.i()? > 0 {
+    if action == ACTION_DOWN
+        && env
+            .call_method(event, jni_str!("getRepeatCount"), jni_sig!("()I"), &[])?
+            .i()?
+            > 0
+    {
         return Ok(true);
     }
 
@@ -119,13 +130,17 @@ fn key_event(env: &mut JNIEnv, event: &JObject) -> jni::errors::Result<bool> {
     Ok(true)
 }
 
-fn motion_event(env: &mut JNIEnv, event: &JObject) -> jni::errors::Result<bool> {
-    let device_id = env.call_method(event, "getDeviceId", "()I", &[])?.i()?;
+fn motion_event(env: &mut Env, event: &JObject) -> jni::errors::Result<bool> {
+    let device_id = env
+        .call_method(event, jni_str!("getDeviceId"), jni_sig!("()I"), &[])?
+        .i()?;
 
     let Some(axes) = sink().device_axes(device_id) else {
         // Possibly a controller that was plugged in since the last enumeration; ask the worker to
         // look again now rather than swallow input for up to a full poll interval.
-        let source = env.call_method(event, "getSource", "()I", &[])?.i()?;
+        let source = env
+            .call_method(event, jni_str!("getSource"), jni_sig!("()I"), &[])?
+            .i()?;
         if source & SOURCE_CLASS_JOYSTICK != 0 {
             sink().request_poll();
         }
@@ -135,7 +150,12 @@ fn motion_event(env: &mut JNIEnv, event: &JObject) -> jni::errors::Result<bool> 
     let mut values = Vec::with_capacity(axes.len());
     for &axis in axes.iter() {
         let value = env
-            .call_method(event, "getAxisValue", "(I)F", &[JValue::Int(axis)])?
+            .call_method(
+                event,
+                jni_str!("getAxisValue"),
+                jni_sig!("(I)F"),
+                &[JValue::Int(axis)],
+            )?
             .f()?;
         values.push((axis, value));
     }
